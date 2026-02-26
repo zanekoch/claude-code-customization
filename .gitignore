@@ -1,0 +1,18 @@
+# logs
+*.jsonl
+*.log
+hook_handler.jsonl
+tool_usage.log
+
+# tmux marker files
+tmux-renamed/
+
+# generated settings (install.sh creates this in ~/.claude/)
+settings.json
+
+# python
+__pycache__/
+*.pyc
+
+# os
+.DS_Store
