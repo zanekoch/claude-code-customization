@@ -206,12 +206,26 @@ print('  Set notify command and tui.notifications')
 
 # --- step 5: check audio player ---
 echo ""
-echo "[5/5] Checking audio player..."
+echo "[5/5] Checking notification dependencies..."
 
 OS_TYPE="$(uname -s)"
 case "$OS_TYPE" in
     Darwin)
-        echo "  macOS detected - afplay is built-in, no action needed"
+        echo "  macOS detected - afplay is built-in"
+        if command -v terminal-notifier &>/dev/null; then
+            echo "  terminal-notifier found (visual notifications enabled)"
+        elif command -v brew &>/dev/null; then
+            echo "  terminal-notifier not found - installing via Homebrew..."
+            if brew install terminal-notifier; then
+                echo "  Installed terminal-notifier"
+            else
+                echo "  Warning: failed to install terminal-notifier via Homebrew"
+                echo "  Visual notifications will fall back to osascript"
+            fi
+        else
+            echo "  Warning: Homebrew not found; cannot auto-install terminal-notifier"
+            echo "  Visual notifications will fall back to osascript"
+        fi
         ;;
     Linux)
         if command -v paplay &>/dev/null; then
@@ -268,6 +282,7 @@ echo "  $CODEX_CONFIG_FILE"
 echo ""
 echo "To test sounds: python3 $HOOKS_DIR/test_sounds.py"
 echo "To test Codex notify: echo '{\"type\":\"agent-turn-complete\"}' | python3 $CODEX_HOOKS_DIR/codex_notify.py"
+echo "Clicking the Codex visual notification should focus Warp."
 echo "Logs directory:  $LOGS_DIR"
 echo ""
 echo "Start a new Claude Code or Codex session to activate hooks."

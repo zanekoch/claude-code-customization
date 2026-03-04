@@ -12,11 +12,13 @@ import subprocess
 import shutil
 import platform
 from pathlib import Path
+from typing import Optional
 import re
 
 # ===== CONFIGURATION =====
 # choose which sound set to use: "voice" (spoken words) or "beeps" (simple tones)
 SOUNDS_TYPE = "beeps"
+WARP_BUNDLE_ID = "dev.warp.Warp-Stable"
 
 # ===== SOUND MAPPINGS =====
 # this dictionary maps Claude Code events and tools to sound files
@@ -24,6 +26,56 @@ SOUND_MAP = {
     # system events - only for task completion
     "Stop": "ready",           # task completed
 }
+
+# ===== NOTIFICATION MAPPINGS =====
+NOTIFICATION_MAP = {
+    "Stop":       {"title": "Claude Code", "message": "Turn complete"},
+    "permission": {"title": "Claude Code", "message": "Approval requested"},
+    "question":   {"title": "Claude Code", "message": "Question for you"},
+    "plan":       {"title": "Claude Code", "message": "Plan ready for review"},
+}
+
+
+def get_terminal_notifier_path() -> Optional[str]:
+    which_path = shutil.which("terminal-notifier")
+    if which_path:
+        return which_path
+    for candidate in ("/opt/homebrew/bin/terminal-notifier", "/usr/local/bin/terminal-notifier"):
+        if Path(candidate).exists():
+            return candidate
+    return None
+
+
+def show_visual_notification(title: str, message: str) -> bool:
+    tn_path = get_terminal_notifier_path()
+    if tn_path:
+        try:
+            result = subprocess.run(
+                [tn_path, "-title", title, "-message", message,
+                 "-activate", WARP_BUNDLE_ID, "-timeout", "10"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=8,
+            )
+            return result.returncode == 0
+        except Exception:
+            pass
+
+    if platform.system() == "Darwin" and Path("/usr/bin/osascript").exists():
+        safe_title = title.replace("\\", "\\\\").replace('"', '\\"')
+        safe_message = message.replace("\\", "\\\\").replace('"', '\\"')
+        script = f'display notification "{safe_message}" with title "{safe_title}"'
+        try:
+            result = subprocess.run(
+                ["/usr/bin/osascript", "-e", script],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+    return False
 
 
 def get_audio_command():
@@ -106,39 +158,34 @@ def log_hook_data(hook_data):
         print(f"Failed to log hook_data: {e}", file=sys.stderr)
 
 
-def get_sound_for_event(hook_data):
+def get_event_actions(hook_data):
     """
-    Determine which sound to play based on Claude's action.
-
-    Args:
-        hook_data: Dictionary containing event information from Claude
+    Determine which sound and notification to trigger based on Claude's action.
 
     Returns:
-        Sound name (string) or None if no sound should play
+        (sound_name, notification_key) — either may be None
     """
-
     event_name = hook_data.get("hook_event_name", "")
     tool_name = hook_data.get("tool_name", "")
     message = hook_data.get("message", "")
 
-    # check for permission requests or attention needed (special case of Notification)
+    # permission requests / attention needed
     if event_name == "Notification" and ("needs your permission" in message or "needs your attention" in message):
-        return "permission"
+        return "permission", "permission"
 
-    # check for AskUserQuestion tool (Claude asking the user a question)
+    # AskUserQuestion
     if event_name == "PreToolUse" and tool_name == "AskUserQuestion":
-        return "permission"
+        return "permission", "question"
 
-    # check for ExitPlanMode tool (Claude asking for plan approval)
+    # ExitPlanMode
     if event_name == "PreToolUse" and tool_name == "ExitPlanMode":
-        return "permission"
+        return "permission", "plan"
 
-    # check if this is a system event (task completion only)
+    # Stop / task complete
     if event_name in SOUND_MAP:
-        return SOUND_MAP[event_name]
+        return SOUND_MAP[event_name], event_name
 
-    # no matching sound found
-    return None
+    return None, None
 
 def main():
     """
@@ -154,10 +201,14 @@ def main():
         input_data = json.load(sys.stdin)
         log_hook_data(input_data)
 
-        sound_name = get_sound_for_event(input_data)
+        sound_name, notif_key = get_event_actions(input_data)
 
         if sound_name:
             play_sound(sound_name)
+
+        if notif_key and notif_key in NOTIFICATION_MAP:
+            n = NOTIFICATION_MAP[notif_key]
+            show_visual_notification(n["title"], n["message"])
 
         sys.exit(0)
 
