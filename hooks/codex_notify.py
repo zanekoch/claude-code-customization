@@ -4,6 +4,7 @@
 import json
 import platform
 import shutil
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import Optional
 
 SOUNDS_TYPE = "beeps"
 WARP_BUNDLE_ID = "dev.warp.Warp-Stable"
+STATE_DB_PATH = Path.home() / ".codex" / "state_5.sqlite"
 
 EVENT_CONFIG = {
     "agent-turn-complete": {
@@ -77,6 +79,33 @@ def parse_notification():
     return {}
 
 
+def get_payload_thread_id(payload: dict) -> str:
+    return payload.get("thread-id") or payload.get("thread_id") or ""
+
+
+def is_subagent_thread(thread_id: str, db_path: Path = STATE_DB_PATH) -> bool:
+    if not thread_id or not db_path.exists():
+        return False
+
+    try:
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT agent_nickname, agent_role FROM threads WHERE id = ?",
+                (thread_id,),
+            ).fetchone()
+    except sqlite3.Error:
+        return False
+
+    if row is None:
+        return False
+
+    return bool(row[0] or row[1])
+
+
+def should_emit_notification(payload: dict) -> bool:
+    return not is_subagent_thread(get_payload_thread_id(payload))
+
+
 def get_terminal_notifier_path() -> Optional[str]:
     which_path = shutil.which("terminal-notifier")
     if which_path:
@@ -133,6 +162,9 @@ def show_visual_notification(title: str, message: str) -> bool:
 def main() -> int:
     try:
         payload = parse_notification()
+        if not should_emit_notification(payload):
+            return 0
+
         event_type = payload.get("type", "")
         event = EVENT_CONFIG.get(event_type)
         if not event:
